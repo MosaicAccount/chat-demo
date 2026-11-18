@@ -1,5 +1,6 @@
 import { isTranslationKey, translate } from '../../i18n/index.js'
 import { classifyStatus } from '../api/errors.js'
+import { getActiveProvider } from '../settings.js'
 import type { AssistantMessage } from './types.js'
 
 export type Notice = {
@@ -29,13 +30,18 @@ export const describeReply = (reply: AssistantMessage): Notice | null => {
       return { text: message || translate('uploadFileStatusFailed') }
     }
     if (kind === 'network') {
-      return { text: translate('commonNetworkErrorToast') }
+      // fetch 抛错既可能是断网，也可能是服务不返回 CORS 预检头（如智谱）
+      return { text: translate('replyNetworkOrCors') }
     }
     switch (classifyStatus(status)) {
       case 'unauthorized':
         return { text: translate('replyInvalidApiKey'), action: 'apiKey' }
       case 'insufficientBalance':
-        return { text: translate('replyInsufficientBalance'), action: 'topUp' }
+        // 充值入口指向 DeepSeek 控制台，其他供应商不展示
+        return {
+          text: translate('replyInsufficientBalance'),
+          ...(getActiveProvider().id === 'deepseek' ? { action: 'topUp' as const } : {}),
+        }
       case 'rateLimited':
         return { text: translate('replyRateLimited') }
       case 'serverBusy':

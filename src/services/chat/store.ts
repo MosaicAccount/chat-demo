@@ -1,10 +1,17 @@
 import { create } from 'zustand'
 import { createId } from '../../utils/id.js'
 import { ApiError, streamMessage } from '../api/client.js'
-import type { ChatModel, CreateMessageRequest } from '../api/types.js'
+import type { ProviderProfile } from '../api/providers.js'
+import type { CreateMessageRequest } from '../api/types.js'
 import { extractFileIds, getFileErrorCode, isRetryableApiError } from '../api/errors.js'
 import { cancelUpload, describeUploadError, uploadAttachment, useUploads } from '../attachments.js'
-import { useSettings } from '../settings.js'
+import {
+  findModelProvider,
+  getActiveProvider,
+  getDeepseekApiKey,
+  resolveProvider,
+  useSettings,
+} from '../settings.js'
 import { appendBranch, getVisibleMessages, normalizeSession, selectVersion } from './branches.js'
 import * as db from './db.js'
 import {
@@ -32,28 +39,58 @@ import {
   type UserMessage,
 } from './types.js'
 
-/** deepseek-flash 同时支持深度思考与图片输入 */
-const MODEL: ChatModel = 'deepseek-flash'
-/** 所有生成请求统一携带的助手身份说明 */
-const SYSTEM_PROMPT = '该助手为DeepSeek，由深度求索公司创造。'
 /** 保留最近打开的详情；当前会话、生成中及尚未成功保存的会话不淘汰。 */
 const SESSION_CACHE_LIMIT = 5
-/** 安全审核固定开启，所有请求都走扩展模式 */
+/** 安全审核固定开启，所有请求都走扩展模式（仅声明了该能力的供应商发送） */
 const SAFETY_CHECK = { level: 'high' } as const
 /** 服务端判定 file_id 失效后，重新补传并重发的最多次数（不含首次请求） */
 const FILE_RETRY_LIMIT = 2
 /** 退避基数，第 n 次重试等待 2^n 倍；连续失败达到上限就放弃，把原始报错展示出来 */
 const FILE_RETRY_BASE_DELAY = 1000
 
-/** 阅读链接始终开启，智能搜索开关控制是否另行声明搜索工具（含边想边搜）。 */
-const serverTools = (search: boolean): CreateMessageRequest['tools'] => {
-  const tools: CreateMessageRequest['tools'] = [
-    { type: 'deepseek_read_url', name: 'deepseek_read_url' },
-  ]
-  if (search) {
+/**
+ * 按供应商能力声明服务端工具：链接阅读与联网搜索各自独立，都不支持时不发 tools。
+ * 工具名与 kind 由服务端协议约定，接入其他供应商时这些能力位为 false。
+ */
+const serverTools = (
+  features: ProviderProfile['features'],
+  search: boolean
+): NonNullable<CreateMessageRequest['tools']> => {
+  const tools: NonNullable<CreateMessageRequest['tools']> = []
+  if (features.readLink) {
+    tools.push({ type: 'deepseek_read_url', name: 'deepseek_read_url' })
+  }
+  if (features.search && search) {
     tools.push({ type: 'deepseek_web_search', name: 'deepseek_web_search' })
   }
   return tools
+}
+
+/**
+ * 按供应商能力位拼请求体：不支持的扩展字段一律不发送，
+ * 避免 Anthropic 兼容端点的严格校验直接返回 400。
+ */
+const createRequestBody = (
+  provider: ProviderProfile,
+  reply: AssistantMessage,
+  messages: CreateMessageRequest['messages'],
+  withTitle: boolean
+): CreateMessageRequest => {
+  const { features } = provider
+  const tools = serverTools(features, Boolean(reply.search))
+  return {
+    model: reply.model ?? provider.defaultModel,
+    // Anthropic 协议必填；DeepSeek 兼容端点沿用服务端默认
+    ...(provider.maxTokens > 0 ? { max_tokens: provider.maxTokens } : {}),
+    ...(provider.system ? { system: provider.system } : {}),
+    messages,
+    ...(features.thinking
+      ? { thinking: { type: reply.thinking ? 'enabled' : ('disabled' as const) } }
+      : {}),
+    ...(tools.length > 0 ? { tools } : {}),
+    ...(features.safetyCheck ? { safety_check: SAFETY_CHECK } : {}),
+    ...(withTitle && features.title ? { title: { enabled: true } } : {}),
+  }
 }
 
 /** 允许自动补标题的请求；手动重命名后取消本轮标题写入，包含主动清空标题的情况。 */
@@ -253,16 +290,24 @@ export const bindChatPersistence = () => {
   }
 }
 
-/** 按当前开关创建回复：深度思考对应 thinking，智能搜索控制 deepseek_web_search。 */
+/** 服务端不支持自动命名时用提问生成本地标题：取首行前 24 字，纯附件时用文件名 */
+const getLocalTitle = (text: string, files: UserMessage['files']) => {
+  const source = (text.trim().split('\n')[0] ?? '').trim() || (files[0]?.name ?? '')
+  return source.length > 24 ? `${source.slice(0, 24)}…` : source
+}
+
+/** 按当前供应商与开关创建回复：不支持的能力按关闭记录，续写时也不会带上不支持的字段。 */
 const createReply = (): AssistantMessage => {
-  const { thinking, search } = useSettings.getState()
+  const { thinking, search, model, providerId } = useSettings.getState()
+  const { features } = resolveProvider(providerId)
   return {
     id: createId(),
     role: 'assistant',
     createdAt: Date.now(),
-    model: MODEL,
-    thinking,
-    search,
+    model,
+    providerId,
+    thinking: thinking && features.thinking,
+    search: search && features.search,
     prefix: true,
     status: 'pending',
     blocks: [],
@@ -603,6 +648,13 @@ export const sendMessage = (targetSessionId: string | null) => {
     ...appendBranch(session, history.at(-1)?.id ?? null, [question, reply]),
     updatedAt: now,
   }))
+  // 服务端没有 title 扩展的供应商在本地命名，否则会话永远停在「新对话」
+  if (!getActiveProvider().features.title) {
+    const localTitle = getLocalTitle(text, question.files)
+    updateSession(sessionId, (session) =>
+      session.title || !localTitle ? session : { ...session, title: localTitle }
+    )
+  }
   if (files.length > 0) {
     pendingFiles.set(sessionId, [
       ...(pendingFiles.get(sessionId) ?? []),
@@ -706,12 +758,17 @@ export const continueReply = (sessionId: string, messageId: string) => {
     return
   }
   const { thinking, search } = useSettings.getState()
+  const provider = getActiveProvider()
   const reply: AssistantMessage = {
     ...previous,
-    // 未记录请求配置的回复，续写时使用默认模型和当前开关。
-    model: previous.model ?? MODEL,
-    thinking: previous.thinking ?? thinking,
-    search: previous.search ?? search,
+    // 未记录请求配置的回复，续写时使用当前供应商与开关；模型不属于当前供应商时换默认模型。
+    model:
+      previous.model && findModelProvider(previous.model)?.id !== provider.id
+        ? provider.defaultModel
+        : (previous.model ?? provider.defaultModel),
+    providerId: previous.providerId ?? provider.id,
+    thinking: (previous.thinking ?? thinking) && provider.features.thinking,
+    search: (previous.search ?? search) && provider.features.search,
     status: 'pending',
     stopReason: undefined,
     stopDetails: undefined,
@@ -818,7 +875,8 @@ const prepareFiles = async (sessionId: string, request: Request, signal: AbortSi
   // 服务端判定 file_id 失效时会清掉会话里的 serverId，先用最新消息替换请求快照，
   // 否则快照里仍是旧 id，补传会直接复用它。
   request = refreshRequest(sessionId, request)
-  const apiKey = useSettings.getState().apiKey ?? ''
+  // Files API 只有 DeepSeek 兼容端点提供，补传固定使用该供应商的 Key
+  const apiKey = getDeepseekApiKey() ?? ''
   const serverIds = new Map<string, string>()
   // 停止生成立即生效；上传本身不取消（输入框与其他消息可能共用同一任务），完成后照常写回 serverId
   const aborted = new Promise<never>((_, reject) => {
@@ -982,10 +1040,14 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
       try {
         const prepared = await prepareFiles(sessionId, request, controller.signal)
         preparing = false
+        // 供应商与 Key 在请求开始时固定，生成中切换供应商不影响本轮。
+        const provider = getActiveProvider()
         // 附件就绪后获取本轮信息；续写沿用原回答快照，重新生成的快照独立保存。
-        const latestReminder = prepared.prefix
-          ? prepared.prefix.latestReminder
-          : createLatestReminder(useSettings.getState())
+        const latestReminder = !provider.features.latestReminder
+          ? undefined
+          : prepared.prefix
+            ? prepared.prefix.latestReminder
+            : createLatestReminder(useSettings.getState())
         reply = { ...reply, latestReminder }
         updateReply(sessionId, reply)
         persist(sessionId)
@@ -994,19 +1056,12 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
           prepared.question,
           prepared.prefix,
           initial.thinking ?? false,
-          latestReminder
+          latestReminder,
+          provider.features.latestReminder
         )
         const events = streamMessage(
-          useSettings.getState().apiKey ?? '',
-          {
-            model: initial.model ?? MODEL,
-            system: SYSTEM_PROMPT,
-            messages,
-            thinking: { type: initial.thinking ? 'enabled' : 'disabled' },
-            safety_check: SAFETY_CHECK,
-            tools: serverTools(initial.search ?? false),
-            ...(titleRequests.has(controller) ? { title: { enabled: true } } : {}),
-          },
+          { provider, apiKey: useSettings.getState().apiKey ?? '' },
+          createRequestBody(provider, initial, messages, titleRequests.has(controller)),
           controller.signal
         )
         const blockIndexes = new Map<number, number>()

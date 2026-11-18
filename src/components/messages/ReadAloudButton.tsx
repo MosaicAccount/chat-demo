@@ -1,4 +1,5 @@
 import { useTranslate } from '../../i18n/index.js'
+import { useSettings } from '../../services/settings.js'
 import {
   describeReadAloudError,
   toggleReadAloud,
@@ -9,10 +10,17 @@ import { IconButton } from '../base/IconButton.js'
 import { showToast } from '../base/toastState.js'
 import { ReadingBars } from './ReadingBars.js'
 
-/** 朗读按钮：未朗读时点击开始，加载中或朗读中点击停止；正文原样提交，由服务端过滤 markdown */
+/**
+ * 朗读按钮：未朗读时点击开始，加载中或朗读中点击停止；正文原样提交，由服务端过滤 markdown。
+ * TTS 只有 DeepSeek 兼容端点提供，未配置该供应商的 Key 时不展示。
+ */
 export const ReadAloudButton = ({ messageId, text }: { messageId: string; text: string }) => {
   const t = useTranslate()
+  const available = useSettings((state) => state.providers.deepseek.apiKey !== null)
   const status = useReadAloud((state) => (state.messageId === messageId ? state.status : 'idle'))
+  if (!available) {
+    return null
+  }
   return (
     <IconButton
       icon={status === 'idle' ? <IconPlayMediaOutline16 /> : <ReadingBars mode={status} />}

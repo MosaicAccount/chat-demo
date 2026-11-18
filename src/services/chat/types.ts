@@ -1,5 +1,6 @@
 import type { TranslationMessage } from '../../i18n/index.js'
 import type { ApiErrorKind } from '../api/client.js'
+import type { ProviderId } from '../api/providers.js'
 import type {
   ChatModel,
   MessageUsage,
@@ -77,6 +78,8 @@ export type AssistantMessage = MessageBranch & {
   createdAt: number
   /** 未记录模型时为 null，续写使用当前默认模型。 */
   model: ChatModel | null
+  /** 生成本条回复的供应商；历史消息可能缺省，缺省时按当前供应商处理 */
+  providerId?: ProviderId
   /** 请求时是否开启深度思考 */
   thinking?: boolean
   /** 请求时是否声明 deepseek_web_search；关闭时仍声明 deepseek_read_url */

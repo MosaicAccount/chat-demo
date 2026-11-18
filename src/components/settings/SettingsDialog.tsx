@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   IconDarkOutline16,
   IconDataOutline16,
@@ -19,14 +19,35 @@ import { useIsMobile } from '../../app/viewport.js'
 import { useChatStore } from '../../services/chat/store.js'
 import { regionCodes, getRegionName, provinces } from '../../services/location.js'
 import {
+  addProvider,
   isChineseBrowser,
+  removeProvider,
   setLocale,
   setLocation,
+  setModel,
+  setProvider,
   setThemePreference,
   setTtsVoice,
+  updateProvider,
+  useActiveProvider,
+  useProviderList,
   useSettings,
   type ThemePreference,
 } from '../../services/settings.js'
+import {
+  getMissingFeatures,
+  getProviderLabel,
+  PROVIDER_PRESETS,
+  type UserFacingFeature,
+} from '../../services/api/providers.js'
+import {
+  forgetModels,
+  loadModels,
+  useModelOptions,
+  useModelsError,
+  useModelsStatus,
+  type ModelsErrorKind,
+} from '../../services/api/models.js'
 import { useTranslate, type TranslationKey, type TranslationMessage } from '../../i18n/index.js'
 import { Button } from '../base/Button.js'
 import { Modal } from '../base/Modal.js'
@@ -103,6 +124,8 @@ const SettingsContent = () => {
             </>
           ) : (
             <>
+              <ProviderSetting />
+              <ModelSetting />
               <ApiKeyField editor={apiKeyEditor} />
               <ImportHistory historyImport={historyImport} disabled={historyBusy} />
               <ExportHistory disabled={historyBusy} />
@@ -203,6 +226,179 @@ const useHistoryDelete = () => {
     },
     confirm,
   }
+}
+
+/** 拉取模型列表失败时的提示：按原因给出可操作的说明 */
+const MODEL_ERROR_KEYS: Record<ModelsErrorKind, TranslationKey> = {
+  auth: 'modelListErrorAuth',
+  notFound: 'modelListErrorNotFound',
+  format: 'modelListErrorFormat',
+  network: 'modelListErrorNetwork',
+}
+
+/** 「添加服务」里表示不带预设的选项值 */
+const CUSTOM_PRESET = '__custom__'
+
+/** 能力位在界面上的文案 */
+const FEATURE_KEYS: Record<UserFacingFeature, TranslationKey> = {
+  search: 'featureSearch',
+  attachments: 'featureAttachments',
+}
+
+/**
+ * 模型服务：内置 DeepSeek，其余由用户添加（OpenAI 兼容），可同时存在多条。
+ * 每条服务各自保存名称、地址、Key 与模型。
+ */
+const ProviderSetting = () => {
+  const t = useTranslate()
+  const providerId = useSettings((state) => state.providerId)
+  const provider = useActiveProvider()
+  const providers = useProviderList()
+  const timer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(timer.current), [])
+
+  const reload = () => {
+    window.clearTimeout(timer.current)
+    void loadModels(provider.id, true)
+  }
+
+  /** 地址输入停顿 700ms 后按新地址重拉模型列表；还没成形为 URL 时不发请求 */
+  const changeBaseUrl = (value: string) => {
+    updateProvider(provider.id, { baseUrl: value })
+    window.clearTimeout(timer.current)
+    if (!/^https?:\/\/\S+$/i.test(value.trim())) {
+      return
+    }
+    timer.current = window.setTimeout(reload, 700)
+  }
+
+  return (
+    <div className={styles.cell}>
+      <div className={styles.modelRow}>
+        <div className={styles.text}>
+          <div className={styles.label}>{t('settingsProvider')}</div>
+        </div>
+        <Select
+          ariaLabel={t('settingsProvider')}
+          className={styles.providerSelect}
+          value={providerId}
+          options={providers.map((item) => ({
+            value: item.id,
+            label: getProviderLabel(item) || t('providerUntitled'),
+          }))}
+          onChange={setProvider}
+        />
+        <Select
+          ariaLabel={t('providerAdd')}
+          value={CUSTOM_PRESET}
+          placeholder={t('providerAdd')}
+          options={[
+            ...PROVIDER_PRESETS.map((preset) => ({ value: preset.id, label: preset.name })),
+            { value: CUSTOM_PRESET, label: t('providerCustom') },
+          ]}
+          onChange={(value) => addProvider(value === CUSTOM_PRESET ? undefined : value)}
+        />
+      </div>
+      {provider.editable ? (
+        <div className={styles.providerFields}>
+          <input
+            className={styles.modelInput}
+            aria-label={t('providerName')}
+            placeholder={t('providerNamePlaceholder')}
+            autoComplete="off"
+            spellCheck={false}
+            value={provider.name}
+            onChange={(event) => updateProvider(provider.id, { name: event.target.value })}
+          />
+          <input
+            className={styles.modelInput}
+            aria-label={t('providerBaseUrl')}
+            placeholder="https://api.example.com/v1"
+            autoComplete="off"
+            spellCheck={false}
+            value={provider.baseUrl}
+            onChange={(event) => changeBaseUrl(event.target.value)}
+            onBlur={reload}
+          />
+          <button
+            type="button"
+            className={styles.providerRemove}
+            onClick={() => {
+              forgetModels(provider.id)
+              removeProvider(provider.id)
+            }}
+          >
+            {t('providerRemove')}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/** 选项值：选中它时改用下面的输入框填模型 id */
+const CUSTOM_MODEL = '__custom__'
+
+/** 模型：列表来自供应商的 models 接口，拉取失败时回落到内置列表；列表外的 id 可手填 */
+const ModelSetting = () => {
+  const t = useTranslate()
+  const provider = useActiveProvider()
+  const apiKey = useSettings((state) => state.apiKey)
+  const model = useSettings((state) => state.model)
+  const options = useModelOptions(provider)
+  const status = useModelsStatus(provider)
+  const modelsError = useModelsError(provider)
+  const custom = !options.some((item) => item.id === model)
+  const missing = getMissingFeatures(provider)
+
+  // 换供应商或换 Key 后重新拉取；有缓存时先用缓存，过期才真正请求
+  useEffect(() => {
+    void loadModels(provider.id)
+  }, [provider.id, apiKey])
+
+  return (
+    <div className={styles.cell}>
+      <div className={styles.modelRow}>
+        <div className={styles.text}>
+          <div className={styles.label}>{t('settingsModel')}</div>
+          {missing.length > 0 ? (
+            <div className={styles.description}>
+              {t('providerUnsupportedFeatures', {
+                features: missing.map((item) => t(FEATURE_KEYS[item])).join(t('listSeparator')),
+              })}
+            </div>
+          ) : null}
+          {/* 预设自带兜底模型时（该服务本身没有 models 接口）不打扰用户 */}
+          {status === 'error' && provider.models.length === 0 ? (
+            <div className={styles.description}>
+              {t(modelsError ? MODEL_ERROR_KEYS[modelsError] : 'modelListFallback')}
+            </div>
+          ) : null}
+        </div>
+        <Select
+          ariaLabel={t('settingsModel')}
+          className={styles.modelSelect}
+          value={custom ? CUSTOM_MODEL : model}
+          options={[
+            ...options.map((item) => ({ value: item.id, label: item.label })),
+            { value: CUSTOM_MODEL, label: t('modelCustom') },
+          ]}
+          onChange={(value) => setModel(value === CUSTOM_MODEL ? '' : value)}
+        />
+      </div>
+      {custom ? (
+        <input
+          className={styles.modelInput}
+          aria-label={t('modelCustom')}
+          placeholder={t('modelCustomPlaceholder')}
+          autoComplete="off"
+          spellCheck={false}
+          value={model}
+          onChange={(event) => setModel(event.target.value)}
+        />
+      ) : null}
+    </div>
+  )
 }
 
 const LocationSetting = () => {

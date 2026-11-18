@@ -205,23 +205,26 @@ export const readMessageEvent = (value: unknown): MessageStreamEvent | null => {
         return null
       }
       break
-    case 'message_delta':
-      if (
-        !isRecord(value.delta) ||
-        !['end_turn', 'max_tokens', 'tool_use', 'refusal'].includes(
-          value.delta.stop_reason as string
-        )
-      ) {
+    case 'message_delta': {
+      if (!isRecord(value.delta)) {
+        return null
+      }
+      // 其他供应商可能返回 stop_sequence（命中自定义停止串），按正常结束处理
+      const stopReason =
+        value.delta.stop_reason === 'stop_sequence' ? 'end_turn' : value.delta.stop_reason
+      if (!['end_turn', 'max_tokens', 'tool_use', 'refusal'].includes(stopReason as string)) {
         return null
       }
       return {
         ...value,
         delta: {
           ...value.delta,
+          stop_reason: stopReason,
           title: isOptionalString(value.delta.title) ? value.delta.title : undefined,
         },
         usage: isUsage(value.usage) ? value.usage : undefined,
       } as MessageStreamEvent
+    }
     case 'message_stop':
       break
     default:
