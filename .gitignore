@@ -9,3 +9,7 @@ build/
 .env.*
 !.env.example
 tmp/
+
+# 本地 IDE 元数据与工作记录
+.openidea/
+.workbuddy/
