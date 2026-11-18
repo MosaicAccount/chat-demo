@@ -29,6 +29,13 @@ export type { ApiAuth } from './providers.js'
 
 export { request }
 
+/** 发给 Anthropic 端点前剔除只属于 Chat Completions 的字段 */
+const omitOpenAIOnly = (body: CreateMessageRequest): CreateMessageRequest => {
+  const payload = { ...body }
+  delete payload.reasoning_effort
+  return payload
+}
+
 /** 会话端点：Anthropic 是 /messages，OpenAI 是 /chat/completions */
 const conversationUrl = (provider: ProviderProfile) =>
   provider.protocol === 'openai' ? chatCompletionsUrl(provider) : messagesUrl(provider)
@@ -157,7 +164,8 @@ export async function* streamMessage(
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
     },
-    body: JSON.stringify({ ...body, stream: true }),
+    // reasoning_effort 是 OpenAI 协议的字段，Anthropic 端点不认识（部分服务会 400）
+    body: JSON.stringify({ ...omitOpenAIOnly(body), stream: true }),
     signal,
   })
   const contentType = response.headers.get('Content-Type') ?? ''

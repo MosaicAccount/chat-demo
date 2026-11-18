@@ -59,7 +59,11 @@ DeepSeek 通道走 Anthropic Messages 协议，请求体按能力位裁剪：不
 
 添加的服务走 OpenAI Chat Completions，没有联网搜索、来源引用、附件上传、服务端自动命名与推理开关——Chat Completions 没有对应结构；请求体在 [openai.ts](src/services/api/openai.ts) 里转换并补 `stream`，流式增量再翻译回内部块事件，因此会话、续写与导入导出都不区分协议。
 
-语音（ASR / TTS）与附件上传（Files API）只有 DeepSeek 提供，固定使用 DeepSeek 的 Key，与当前对话服务无关；未配置 DeepSeek Key 时相应入口不展示。
+**思考深度**：输入框的「深度思考」按 关闭 → 低 → 中 → 高 循环，默认关闭，旧版开着的会迁移成「高」。两条通道用法不同——DeepSeek 的 `budget_tokens` 会被服务端忽略，真正生效的是 `thinking.type` + `output_config.effort`（`low` / `high` / `max`，官方把 `medium`、`xhigh` 都映射到 `high`，`ultra` 映射到 `max`）；OpenAI 兼容通道用 `reasoning_effort`，只在模型名看起来是推理模型时才下发，被服务端以 400 拒绝时会自动去掉该参数重试一次。
+
+**思考深度**：输入框的「深度思考」按 关闭 → 低 → 中 → 高 循环，默认关闭，旧版开着的会迁移成「高」。两条通道用法不同——DeepSeek 的 `budget_tokens` 会被服务端忽略，真正生效的是 `thinking.type` + `output_config.effort`（`low` / `high` / `max`，官方把 `medium`、`xhigh` 都映射到 `high`，`ultra` 映射到 `max`）；OpenAI 兼容通道用 `reasoning_effort`，只在模型名看起来是推理模型时才下发，被服务端以 400 拒绝时会自动去掉该参数重试一次。
+
+**能力归属**：聊天模型可以自由切换，但附件与联网搜索是 DeepSeek 端点提供的能力（Files API、服务端工具），切到其他服务时附件入口变为禁用并提示切回 DeepSeek 服务，搜索开关直接隐藏——不是没做，是对方的端点不提供。语音（ASR / TTS）走独立接口、固定使用 DeepSeek 的 Key，与当前聊天服务无关；未配置 DeepSeek Key 时语音入口不展示。
 
 新增内置供应商只需在 [providers.ts](src/services/api/providers.ts) 里加一条 `ProviderProfile`。
 

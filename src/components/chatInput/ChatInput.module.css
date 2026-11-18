@@ -297,6 +297,11 @@
   }
 }
 
+.actionDisabled {
+  color: var(--dsw-alias-label-caption);
+  cursor: not-allowed;
+}
+
 .right {
   display: flex;
   flex-shrink: 0;

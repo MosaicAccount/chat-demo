@@ -19,6 +19,12 @@ export type Locale = 'zh-CN' | 'en-US'
 /** 主题偏好；默认跟随系统 */
 export type ThemePreference = 'light' | 'dark' | 'system'
 
+/**
+ * 思考深度。各家的档位语义不同，统一收敛成四档：
+ * 关闭 / 低 / 中 / 高，由供应商画像决定映射成哪个参数。
+ */
+export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high'
+
 /** 单个供应商的本机配置：Key 与所选模型各自独立 */
 export type ProviderSetting = {
   apiKey: string | null
@@ -48,6 +54,8 @@ type Settings = {
   themePreference: ThemePreference
   location: UserLocation | null
   ttsVoice: TtsVoice
+  thinkingLevel: ThinkingLevel
+  /** 派生字段：是否开启思考，等价于 thinkingLevel !== 'off' */
   thinking: boolean
   search: boolean
   siderCollapsed: boolean
@@ -127,6 +135,19 @@ const initialThemePreference = (): ThemePreference => {
   const saved = read(KEYS.themePreference)
   return saved === 'light' || saved === 'dark' ? saved : 'system'
 }
+
+/** 旧版只存 true/false，true 按「高」迁移；未设置时默认关闭 */
+const readThinkingLevel = (): ThinkingLevel => {
+  const saved = read(KEYS.thinking)
+  if (saved === 'true') {
+    return 'high'
+  }
+  return saved === 'low' || saved === 'medium' || saved === 'high' || saved === 'off'
+    ? saved
+    : 'off'
+}
+
+const initialThinkingLevel = readThinkingLevel()
 
 /** 未保存过时使用服务端默认音色 stella（海星） */
 const initialTtsVoice = (): TtsVoice => (read(KEYS.ttsVoice) === 'tide' ? 'tide' : 'stella')
@@ -274,7 +295,8 @@ export const useSettings = create<Settings>(() => ({
   location: initialLocation(),
   themePreference: initialThemePreference(),
   ttsVoice: initialTtsVoice(),
-  thinking: read(KEYS.thinking) === 'true',
+  thinkingLevel: initialThinkingLevel,
+  thinking: initialThinkingLevel !== 'off',
   search: read(KEYS.search) === 'true',
   siderCollapsed: read(KEYS.siderCollapsed) === 'true',
 }))
@@ -465,9 +487,9 @@ export const findModelProvider = (model: string): ProviderProfile | null =>
 export const getDeepseekApiKey = (): string | null =>
   useSettings.getState().providers.deepseek?.apiKey ?? null
 
-export const setThinking = (thinking: boolean) => {
-  write(KEYS.thinking, String(thinking))
-  useSettings.setState({ thinking })
+export const setThinking = (thinkingLevel: ThinkingLevel) => {
+  write(KEYS.thinking, thinkingLevel)
+  useSettings.setState({ thinkingLevel, thinking: thinkingLevel !== 'off' })
 }
 
 export const setSearch = (search: boolean) => {

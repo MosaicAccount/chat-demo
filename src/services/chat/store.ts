@@ -11,6 +11,7 @@ import {
   getDeepseekApiKey,
   resolveProvider,
   useSettings,
+  type ThinkingLevel,
 } from '../settings.js'
 import { appendBranch, getVisibleMessages, normalizeSession, selectVersion } from './branches.js'
 import * as db from './db.js'
@@ -84,9 +85,7 @@ const createRequestBody = (
     ...(provider.maxTokens > 0 ? { max_tokens: provider.maxTokens } : {}),
     ...(provider.system ? { system: provider.system } : {}),
     messages,
-    ...(features.thinking
-      ? { thinking: { type: reply.thinking ? 'enabled' : ('disabled' as const) } }
-      : {}),
+    ...reasoningBody(provider, reply.thinking ? useSettings.getState().thinkingLevel : 'off'),
     ...(tools.length > 0 ? { tools } : {}),
     ...(features.safetyCheck ? { safety_check: SAFETY_CHECK } : {}),
     ...(withTitle && features.title ? { title: { enabled: true } } : {}),
@@ -294,6 +293,33 @@ export const bindChatPersistence = () => {
 const getLocalTitle = (text: string, files: UserMessage['files']) => {
   const source = (text.trim().split('\n')[0] ?? '').trim() || (files[0]?.name ?? '')
   return source.length > 24 ? `${source.slice(0, 24)}…` : source
+}
+
+/**
+ * 思考参数按协议组装：DeepSeek 的 budget_tokens 被服务端忽略，
+ * 真正生效的是 thinking.type + output_config.effort；
+ * OpenAI 兼容通道用 reasoning_effort，档位一一对应。
+ */
+const DEEPSEEK_EFFORT: Record<Exclude<ThinkingLevel, 'off'>, string> = {
+  low: 'low',
+  // DeepSeek 没有独立的 medium，默认档就是 high
+  medium: 'high',
+  high: 'max',
+}
+
+const reasoningBody = (provider: ProviderProfile, level: ThinkingLevel) => {
+  if (!provider.features.thinking || !provider.reasoningParam) {
+    return {}
+  }
+  if (provider.reasoningParam === 'output_config') {
+    return level === 'off'
+      ? { thinking: { type: 'disabled' as const } }
+      : {
+          thinking: { type: 'enabled' as const },
+          output_config: { effort: DEEPSEEK_EFFORT[level] },
+        }
+  }
+  return level === 'off' ? {} : { reasoning_effort: level }
 }
 
 /** 按当前供应商与开关创建回复：不支持的能力按关闭记录，续写时也不会带上不支持的字段。 */

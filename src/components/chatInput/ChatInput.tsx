@@ -7,8 +7,16 @@ import {
   IconStopFill16,
   IconThinkOutline14,
 } from '../base/icons.js'
-import { getDeepseekApiKey, setSearch, setThinking, useActiveProvider, useSettings } from '../../services/settings.js'
+import {
+  getDeepseekApiKey,
+  setSearch,
+  setThinking,
+  useActiveProvider,
+  useSettings,
+  type ThinkingLevel,
+} from '../../services/settings.js'
 import { useIsMobile } from '../../app/viewport.js'
+import { supportsReasoningEffort } from '../../services/api/openai.js'
 import { sendMessage, stopReply, useChatStore } from '../../services/chat/store.js'
 import {
   addDraftFiles,
@@ -32,8 +40,19 @@ import { ModelPicker } from './ModelPicker.js'
 import { useVoiceInput } from './useVoiceInput.js'
 import { VoiceButton } from './VoiceButton.js'
 import { Spectrum } from './Spectrum.js'
-import { useTranslate } from '../../i18n/index.js'
+import { useTranslate, type TranslationKey } from '../../i18n/index.js'
 import styles from './ChatInput.module.css'
+
+/** 思考深度循环顺序：关闭 → 低 → 中 → 高 */
+const THINKING_LEVELS: ThinkingLevel[] = ['off', 'low', 'medium', 'high']
+const THINKING_LEVEL_KEY: Record<ThinkingLevel, TranslationKey> = {
+  off: 'thinkingOff',
+  low: 'thinkingLow',
+  medium: 'thinkingMedium',
+  high: 'thinkingHigh',
+}
+const nextThinkingLevel = (current: ThinkingLevel) =>
+  THINKING_LEVELS[(THINKING_LEVELS.indexOf(current) + 1) % THINKING_LEVELS.length]
 
 /** 输入框：自适应高度的文本框 + 文件 + 深度思考与智能搜索开关 + 语音输入 + 发送 / 停止 */
 export const ChatInput = memo(function ChatInput({ sessionId }: { sessionId: string | null }) {
@@ -51,11 +70,18 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
     (state) => sessionId !== null && Object.hasOwn(state.streaming, sessionId)
   )
   const thinking = useSettings((state) => state.thinking)
+  const thinkingLevel = useSettings((state) => state.thinkingLevel)
+  const model = useSettings((state) => state.model)
   const importingHistory = useChatStore((state) => state.importingHistory)
   const isMobile = useIsMobile()
   const search = useSettings((state) => state.search)
   /** 当前供应商支持的能力；语音固定走 DeepSeek，只看是否配了 DeepSeek Key */
-  const features = useActiveProvider().features
+  const activeProvider = useActiveProvider()
+  const { features } = activeProvider
+  // OpenAI 兼容通道只有推理类模型才真的认 reasoning_effort，别让开关变成摆设
+  const canThink =
+    features.thinking &&
+    (activeProvider.reasoningParam !== 'reasoning_effort' || supportsReasoningEffort(model))
   const speechAvailable = useSettings((state) => state.providers.deepseek.apiKey !== null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -212,17 +238,24 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
         <ModelPicker />
         {/* 深度思考 / 智能搜索开关，tooltip 在按钮上方；供应商不支持时不显示 */}
         <div ref={togglesRef} className={styles.toggles}>
-          {features.thinking ? (
-            <Tooltip content={t('deactivatedThinkTooltip')}>
+          {canThink ? (
+            <Tooltip content={t('thinkingDepthTooltip')}>
               <button
                 type="button"
                 className={clsx(styles.toggle, thinking && styles.selected)}
-                aria-label={t('thinkingSwitch')}
+                aria-label={
+                  thinkingLevel === 'off'
+                    ? t('thinkingSwitch')
+                    : `${t('thinkingSwitch')} ${t(THINKING_LEVEL_KEY[thinkingLevel])}`
+                }
                 aria-pressed={thinking}
-                onClick={() => setThinking(!thinking)}
+                onClick={() => setThinking(nextThinkingLevel(thinkingLevel))}
               >
                 <IconThinkOutline14 />
-                <span className={styles.toggleLabel}>{t('thinkingSwitch')}</span>
+                <span className={styles.toggleLabel}>
+                  {t('thinkingSwitch')}
+                  {thinkingLevel === 'off' ? '' : ` · ${t(THINKING_LEVEL_KEY[thinkingLevel])}`}
+                </span>
               </button>
             </Tooltip>
           ) : null}
@@ -257,28 +290,36 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
               }}
             />
           ) : null}
+          {/* 附件只有 DeepSeek 端点提供：不支持时常驻但禁用，点一下说明原因，比直接消失更好懂 */}
+          <IconButton
+            size="m"
+            tone="primary"
+            icon={<IconPaperclipOutline16 />}
+            tooltip={features.files ? t('uploadFile') : t('uploadNeedsDeepSeek')}
+            aria-disabled={!features.files || importingHistory}
+            className={features.files ? undefined : styles.actionDisabled}
+            onClick={() => {
+              if (!features.files) {
+                showToast({ key: 'uploadNeedsDeepSeek' })
+                return
+              }
+              if (!importingHistory && ensureApiKey()) {
+                fileInputRef.current?.click()
+              }
+            }}
+          />
           {features.files ? (
-            <>
-              <IconButton
-                size="m"
-                tone="primary"
-                icon={<IconPaperclipOutline16 />}
-                tooltip={t('uploadFile')}
-                disabled={importingHistory}
-                onClick={() => ensureApiKey() && fileInputRef.current?.click()}
-              />
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                hidden
-                accept={ACCEPT}
-                onChange={(event) => {
-                  acceptFiles(Array.from(event.target.files ?? []))
-                  event.target.value = ''
-                }}
-              />
-            </>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              hidden
+              accept={ACCEPT}
+              onChange={(event) => {
+                acceptFiles(Array.from(event.target.files ?? []))
+                event.target.value = ''
+              }}
+            />
           ) : null}
           {streaming && sessionId ? (
             <button

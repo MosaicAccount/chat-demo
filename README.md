@@ -59,7 +59,11 @@ The DeepSeek channel speaks Anthropic Messages. Request bodies are trimmed by ca
 
 Added services speak OpenAI Chat Completions and have no web search, citations, attachments, server-side titles or reasoning toggle, because Chat Completions has no equivalent structures. [openai.ts](src/services/api/openai.ts) converts the request body, adds `stream`, and translates deltas back into internal block events, so conversations, continuation and import/export stay protocol-agnostic.
 
-Speech (ASR / TTS) and attachments (Files API) are DeepSeek-only and always use the DeepSeek key regardless of the selected service; their entry points hide when no DeepSeek key is configured.
+**Thinking depth:** the composer's thinking toggle cycles Off → Low → Medium → High (default Off; a previously enabled toggle migrates to High). The two channels differ: DeepSeek ignores `budget_tokens` and honours `thinking.type` plus `output_config.effort` (`low` / `high` / `max`; upstream maps `medium` and `xhigh` to `high`, `ultra` to `max`), while the OpenAI-compatible channel uses `reasoning_effort`, sent only when the model name looks like a reasoning model and dropped with one retry if the server rejects it with 400.
+
+**Thinking depth:** the composer's thinking toggle cycles Off → Low → Medium → High (default Off; a previously enabled toggle migrates to High). The two channels differ: DeepSeek ignores `budget_tokens` and honours `thinking.type` plus `output_config.effort` (`low` / `high` / `max`; upstream maps `medium` and `xhigh` to `high`, `ultra` to `max`), while the OpenAI-compatible channel uses `reasoning_effort`, sent only when the model name looks like a reasoning model and dropped with one retry if the server rejects it with 400.
+
+**Where capabilities live:** the chat model can be switched freely, but attachments and web search are provided by the DeepSeek endpoint (Files API, server-side tools). On other services the attachment button becomes disabled with an explanation and the search toggle is hidden — the endpoint offers no equivalent, so this is not a missing feature. Speech (ASR / TTS) uses a separate endpoint and always the DeepSeek key, independent of the chat service; the voice entry hides when no DeepSeek key is configured.
 
 To add a built-in service, add one `ProviderProfile` in [providers.ts](src/services/api/providers.ts).
 

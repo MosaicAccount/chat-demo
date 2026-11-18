@@ -181,6 +181,15 @@ export type CreateMessageRequest = {
   system?: string
   messages: MessageParam[]
   thinking?: { type: 'enabled' | 'disabled' }
+  /**
+   * DeepSeek 的思考深度开关：Anthropic 的 budget_tokens 被服务端忽略，
+   * 真正生效的是 output_config.effort（none / low / high / max，各档见文档）。
+   */
+  output_config?: { effort: string }
+  /**
+   * OpenAI 协议的推理档位。仅用于 Chat Completions 通道，发给 Anthropic 端点前会被剔除。
+   */
+  reasoning_effort?: string
   tools?: (DeepseekWebSearchTool | DeepseekReadUrlTool)[]
   safety_check?: { level: 'high' }
   title?: { enabled: boolean }

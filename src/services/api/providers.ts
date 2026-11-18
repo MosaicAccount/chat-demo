@@ -53,6 +53,11 @@ export type ProviderProfile = {
   baseUrl: string
   /** Anthropic 的版本前缀，拼在 baseUrl 之后；OpenAI 协议的地址已含版本段，留空 */
   pathPrefix: string
+  /**
+   * 思考深度用哪个参数表达：DeepSeek 是 output_config.effort，
+   * OpenAI 兼容通道是 reasoning_effort。缺省表示该服务没有推理开关。
+   */
+  reasoningParam?: 'output_config' | 'reasoning_effort'
   /** 用户可改地址：内置供应商为 false，自定义服务为 true */
   editable: boolean
   /** 鉴权方式：DeepSeek 用 x-api-key，其余用 Authorization: Bearer */
@@ -155,6 +160,7 @@ const deepseek: ProviderProfile = {
   defaultModel: 'deepseek-flash',
   maxTokens: 0,
   verifyPath: '/models',
+  reasoningParam: 'output_config',
   features: {
     thinking: true,
     search: true,
@@ -180,8 +186,8 @@ export const getBuiltinProvider = (id: ProviderId): ProviderProfile =>
 
 /** 自定义服务的能力位：Chat Completions 没有搜索、引用、Files API 与标题扩展 */
 const CUSTOM_FEATURES: ProviderFeatures = {
-  // 各家的推理开关参数不一致（reasoning_effort / enable_thinking 等），统一不发
-  thinking: false,
+  // 是否真的下发 reasoning_effort 由模型名判断，见 api/openai.ts
+  thinking: true,
   search: false,
   readLink: false,
   title: false,
@@ -210,6 +216,7 @@ export const createCustomProfile = (config: CustomProviderConfig): ProviderProfi
     defaultModel: models[0]?.id ?? '',
     modelsPath: '/models',
     verifyPath: '/models',
+    reasoningParam: 'reasoning_effort',
     // Chat Completions 必填；各家对上限接受度不同，取较通用的值
     maxTokens: 8192,
     features: CUSTOM_FEATURES,

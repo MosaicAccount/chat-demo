@@ -65,6 +65,19 @@ const toChatMessages = (messages: CreateMessageRequest['messages']): ChatMessage
   return result
 }
 
+/**
+ * 只有推理类模型才带 reasoning_effort：OpenAI 对非推理模型会直接 400，
+ * 部分网关也会拒绝未知字段。宁可不发（退化为普通回答）也不要报错。
+ */
+const REASONING_MODEL =
+  /(^|[/:])(o[1-9]|gpt-5|gpt-6|deepseek|glm-[5-9]|qwen3|kimi|grok-[3-9]|gemini-[3-9])|reasoner|thinking/i
+
+/**
+ * 模型名是否大概率支持 reasoning_effort。宁可不发也不报错：
+ * 猜错的方向是「少发」，退化成普通回答，不会 400。
+ */
+export const supportsReasoningEffort = (model: string) => REASONING_MODEL.test(model)
+
 const toChatBody = (body: CreateMessageRequest) => ({
   model: body.model,
   messages: [
@@ -72,6 +85,9 @@ const toChatBody = (body: CreateMessageRequest) => ({
     ...toChatMessages(body.messages),
   ],
   ...(body.max_tokens ? { max_tokens: body.max_tokens } : {}),
+  ...(body.reasoning_effort && supportsReasoningEffort(body.model)
+    ? { reasoning_effort: body.reasoning_effort }
+    : {}),
   stream: true,
   // 不传 stream_options：部分兼容网关（旧版 Ollama、第三方代理）会因未知字段返回 400，
   // 而用量当前没有界面展示；服务端自愿下发 usage 时仍会解析。
@@ -136,16 +152,29 @@ export async function* streamChatCompletion(
   body: CreateMessageRequest,
   signal: AbortSignal
 ): AsyncGenerator<MessageStreamEvent> {
-  const response = await request(chatCompletionsUrl(auth.provider), {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${auth.apiKey}`,
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream',
-    },
-    body: JSON.stringify(toChatBody(body)),
-    signal,
-  })
+  const payload = toChatBody(body)
+  const post = (data: typeof payload) =>
+    request(chatCompletionsUrl(auth.provider), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${auth.apiKey}`,
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      },
+      body: JSON.stringify(data),
+      signal,
+    })
+  let response: Response
+  try {
+    response = await post(payload)
+  } catch (error) {
+    // 模型或网关不认识 reasoning_effort 时，去掉它重试一次（此时还没开始出字，重试安全）
+    if (payload.reasoning_effort && error instanceof ApiError && error.status === 400) {
+      response = await post({ ...payload, reasoning_effort: undefined })
+    } else {
+      throw error
+    }
+  }
   const contentType = response.headers.get('Content-Type') ?? ''
   if (!response.body || !contentType.includes('text/event-stream')) {
     throw await readErrorResponse(response, 'protocol', '')
