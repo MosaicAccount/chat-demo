@@ -160,6 +160,18 @@
   max-width: min(210px, 100%);
 }
 
+.modelVisibility {
+  align-self: flex-start;
+  margin-top: 6px;
+  padding: 0;
+  color: var(--dsw-alias-brand-primary);
+  font-size: 13px;
+  line-height: 20px;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
 .providerFields {
   display: flex;
   flex-direction: column;

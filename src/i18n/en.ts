@@ -205,4 +205,11 @@ export const en = {
   settingsLocaleEnUS: 'English',
   replyNetworkOrCors:
     'Request was not sent: network issue, or the service blocks cross-origin browser calls (Zhipu does). Use a proxy endpoint instead.',
+  visibleModelsButton: 'Models shown',
+  visibleModelsTitle: 'Choose models to show for {name}',
+  visibleModelsCount: '{shown} of {total} selected',
+  visibleModelsSearch: 'Search models',
+  visibleModelsAll: 'Select all',
+  visibleModelsNone: 'Clear',
+  visibleModelsNoMatch: 'No matching model',
 } satisfies Record<keyof typeof zh, string>

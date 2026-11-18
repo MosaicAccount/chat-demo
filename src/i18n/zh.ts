@@ -196,4 +196,11 @@ export const zh = {
   settingsLocaleEnUS: 'English',
   replyNetworkOrCors:
     '请求没有发出：网络异常，或该服务不允许浏览器跨域访问（如智谱），可改用代理地址',
+  visibleModelsButton: '可见模型',
+  visibleModelsTitle: '选择 {name} 显示的模型',
+  visibleModelsCount: '已选 {shown} / {total}',
+  visibleModelsSearch: '搜索模型',
+  visibleModelsAll: '全选',
+  visibleModelsNone: '清空',
+  visibleModelsNoMatch: '没有匹配的模型',
 } as const

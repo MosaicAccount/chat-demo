@@ -28,6 +28,7 @@ import {
   setProvider,
   setThemePreference,
   setTtsVoice,
+  setVisibleModels,
   updateProvider,
   useActiveProvider,
   useProviderList,
@@ -41,6 +42,7 @@ import {
   type UserFacingFeature,
 } from '../../services/api/providers.js'
 import {
+  applyVisibility,
   forgetModels,
   loadModels,
   useModelOptions,
@@ -54,6 +56,7 @@ import { Modal } from '../base/Modal.js'
 import { Select } from '../base/Select.js'
 import { showToast } from '../base/toastState.js'
 import { ApiKeyConfirm, ApiKeyField, useApiKeyEditor } from './ApiKeyField.js'
+import { VisibleModelsDialog } from './VisibleModelsDialog.js'
 import { closeSettings, useSettingsDialog, type SettingsSection } from './settingsDialogState.js'
 import styles from './Settings.module.css'
 
@@ -345,9 +348,12 @@ const ModelSetting = () => {
   const provider = useActiveProvider()
   const apiKey = useSettings((state) => state.apiKey)
   const model = useSettings((state) => state.model)
-  const options = useModelOptions(provider)
+  const fullOptions = useModelOptions(provider)
+  const visible = useSettings((state) => state.visibleModels[provider.id] ?? null)
+  const options = applyVisibility(fullOptions, visible, model)
   const status = useModelsStatus(provider)
   const modelsError = useModelsError(provider)
+  const [pickerOpen, setPickerOpen] = useState(false)
   const custom = !options.some((item) => item.id === model)
   const missing = getMissingFeatures(provider)
 
@@ -386,6 +392,32 @@ const ModelSetting = () => {
           onChange={(value) => setModel(value === CUSTOM_MODEL ? '' : value)}
         />
       </div>
+      {/* 模型多到用不过来时，勾选只保留常用的几个 */}
+      {fullOptions.length > 5 ? (
+        <button
+          type="button"
+          className={styles.modelVisibility}
+          onClick={() => setPickerOpen(true)}
+        >
+          {t('visibleModelsButton')}
+          {visible ? ` · ${visible.length}/${fullOptions.length}` : ''}
+        </button>
+      ) : null}
+      {pickerOpen ? (
+        <VisibleModelsDialog
+          title={t('visibleModelsTitle', {
+            name: getProviderLabel(provider) || t('providerUntitled'),
+          })}
+          models={fullOptions}
+          selected={visible}
+          onCancel={() => setPickerOpen(false)}
+          onSave={(ids) => {
+            // 全部勾选等价于不限制，之后新上架的模型也能自动出现
+            setVisibleModels(provider.id, ids.length === fullOptions.length ? null : ids)
+            setPickerOpen(false)
+          }}
+        />
+      ) : null}
       {custom ? (
         <input
           className={styles.modelInput}

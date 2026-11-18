@@ -19,6 +19,7 @@ declare const styles: {
   readonly "modelRow": string;
   readonly "modelSelect": string;
   readonly "modelInput": string;
+  readonly "modelVisibility": string;
   readonly "providerFields": string;
   readonly "providerRemove": string;
   readonly "theme": string;

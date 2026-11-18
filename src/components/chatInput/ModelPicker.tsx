@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useAnchoredPosition, useDismiss } from '../base/anchored.js'
 import { IconCheckOutline16, IconChevronDownOutline14 } from '../base/icons.js'
-import { loadModels, useModels } from '../../services/api/models.js'
+import { applyVisibility, loadModels, useModels } from '../../services/api/models.js'
 import {
   getModelLabel,
   getProviderLabel,
@@ -25,6 +25,7 @@ export const ModelPicker = () => {
   const providers = useProviderList()
   const model = useSettings((state) => state.model)
   const modelsState = useModels()
+  const visibleModels = useSettings((state) => state.visibleModels)
   // 自定义模型没有展示名，getModelLabel 会退回 id
   const currentLabel = model ? getModelLabel(provider, model) : ''
   const { anchorRef, floatingRef, position } = useAnchoredPosition<
@@ -49,11 +50,13 @@ export const ModelPicker = () => {
 
   const groups = providers.map((item: ProviderProfile) => {
     const discovered = modelsState[item.id]?.models ?? []
-    const models = discovered.length > 0 ? discovered : [...item.models]
-    // 手填的模型或列表还没拉到时的当前值，补一条以便打勾
-    if (item.id === provider.id && model && !models.some((entry) => entry.id === model)) {
-      return { provider: item, models: [{ id: model, label: model }, ...models] }
-    }
+    const all = discovered.length > 0 ? discovered : [...item.models]
+    // 只列用户勾选的模型；当前选中的始终保留，避免显示成未选择
+    const models = applyVisibility(
+      all,
+      visibleModels[item.id] ?? null,
+      item.id === provider.id ? model : undefined
+    )
     return { provider: item, models }
   })
 

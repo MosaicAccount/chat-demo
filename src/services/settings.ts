@@ -35,6 +35,11 @@ type Settings = {
   customProviders: CustomProviderConfig[]
   /** 按供应商 id 存 Key 与模型；自定义服务被删除后对应条目会一起移除 */
   providers: Record<ProviderId, ProviderSetting>
+  /**
+   * 用户勾选的可见模型；未设置表示全部可见。
+   * 供应商动辄给出上百个模型，这里只影响选择器里列什么，不影响能否手填。
+   */
+  visibleModels: Record<ProviderId, string[] | null>
   /** 派生字段：当前供应商的 Key，请求与既有调用点直接读取，避免到处查表 */
   apiKey: string | null
   /** 派生字段：当前供应商的模型 */
@@ -65,6 +70,7 @@ const KEYS = {
 /** 各供应商的 Key 与模型分开存，切换供应商不互相覆盖 */
 const providerApiKeyKey = (id: ProviderId) => `chat-demo:api-key:${id}`
 const providerModelKey = (id: ProviderId) => `chat-demo:model:${id}`
+const providerVisibleKey = (id: ProviderId) => `chat-demo:visible-models:${id}`
 
 const EMPTY_SETTING: ProviderSetting = { apiKey: null, model: '' }
 
@@ -201,6 +207,30 @@ const initialProviders = (customProviders: CustomProviderConfig[]): Record<Provi
   return providers
 }
 
+/** 读取某个服务的可见模型；没有记录或内容无效时为 null，表示全部可见 */
+const readVisibleModels = (id: ProviderId): string[] | null => {
+  try {
+    const parsed: unknown = JSON.parse(read(providerVisibleKey(id)) ?? 'null')
+    return Array.isArray(parsed) &&
+      parsed.length > 0 &&
+      parsed.every((item) => typeof item === 'string')
+      ? parsed
+      : null
+  } catch {
+    return null
+  }
+}
+
+const initialVisibleModels = (
+  customProviders: CustomProviderConfig[]
+): Record<ProviderId, string[] | null> => {
+  const visible: Record<ProviderId, string[] | null> = {}
+  for (const id of [...Object.keys(BUILTIN_PROVIDERS), ...customProviders.map((item) => item.id)]) {
+    visible[id] = readVisibleModels(id)
+  }
+  return visible
+}
+
 const initialCustom = initialCustomProviders()
 const initialProviderSettings = initialProviders(initialCustom)
 
@@ -237,6 +267,7 @@ export const useSettings = create<Settings>(() => ({
   providerId: initialProviderIdValue,
   customProviders: initialCustom,
   providers: initialProviderSettings,
+  visibleModels: initialVisibleModels(initialCustom),
   apiKey: settingFor(initialProviderSettings, initialProviderIdValue).apiKey,
   model: settingFor(initialProviderSettings, initialProviderIdValue).model,
   locale: initialLocale(),
@@ -348,11 +379,24 @@ export const removeProvider = (id: ProviderId) => {
   persistCustomProviders(next)
   write(providerApiKeyKey(id), null)
   write(providerModelKey(id), null)
+  write(providerVisibleKey(id), null)
   const rest = Object.fromEntries(Object.entries(providers).filter(([key]) => key !== id))
-  useSettings.setState({ customProviders: next, providers: rest })
+  const { visibleModels } = useSettings.getState()
+  const visibleRest = Object.fromEntries(
+    Object.entries(visibleModels).filter(([key]) => key !== id)
+  )
+  useSettings.setState({ customProviders: next, providers: rest, visibleModels: visibleRest })
   if (providerId === id) {
     setProvider(DEFAULT_PROVIDER_ID)
   }
+}
+
+/** 勾选可见模型；传 null 或空数组表示全部可见，避免出现「一个都不显示」的死角 */
+export const setVisibleModels = (providerId: ProviderId, ids: string[] | null) => {
+  const { visibleModels } = useSettings.getState()
+  const value = ids && ids.length > 0 ? [...new Set(ids)] : null
+  write(providerVisibleKey(providerId), value ? JSON.stringify(value) : null)
+  useSettings.setState({ visibleModels: { ...visibleModels, [providerId]: value } })
 }
 
 /** 合并后的当前供应商画像 */

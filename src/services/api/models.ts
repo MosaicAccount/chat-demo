@@ -226,6 +226,33 @@ export const useModelOptions = (provider: ProviderProfile): ModelOption[] => {
     : [...provider.models]
 }
 
+/**
+ * 按用户勾选的可见集合过滤，visible 为 null 表示全部可见。
+ * 当前选中的模型始终保留，否则选择器会显示成「未选择」。
+ */
+export const applyVisibility = (
+  models: ModelOption[],
+  visible: string[] | null | undefined,
+  current?: string
+): ModelOption[] => {
+  const result = visible ? models.filter((item) => visible.includes(item.id)) : [...models]
+  // 只有明确传入当前模型时才补一条（设置里要保留「自定义模型」的编辑态，因此不传）
+  if (current && !result.some((item) => item.id === current)) {
+    result.unshift(models.find((item) => item.id === current) ?? { id: current, label: current })
+  }
+  return result
+}
+
+/** 组件内直接取「远端/兜底 + 用户可见性」过滤后的列表 */
+export const useVisibleModelOptions = (
+  provider: ProviderProfile,
+  current?: string
+): ModelOption[] => {
+  const models = useModelOptions(provider)
+  const visible = useSettings((state) => state.visibleModels[provider.id] ?? null)
+  return applyVisibility(models, visible, current)
+}
+
 /** 界面用：远端列表的状态与失败原因，用于提示加载失败 */
 export const useModelsStatus = (provider: ProviderProfile): ModelsStatus =>
   useModels((state) => state[provider.id]?.status ?? 'idle')
